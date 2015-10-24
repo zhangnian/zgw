@@ -20,7 +20,7 @@
 #include "msg_def.h"
 #include "tlv_codec.h"
 #include "stat.h"
-
+#include "SimpleIni.h"
 
 using namespace muduo;
 using namespace muduo::net;
@@ -29,7 +29,7 @@ using namespace muduo::net;
 class ZGWServer
 {
 public:
-    ZGWServer(EventLoop* loop, InetAddress& listenAddr, int numThreads = 2);
+    ZGWServer(EventLoop* loop, InetAddress& listenAddr, CSimpleIniA& ini);
 
 public:
     /**
@@ -96,6 +96,7 @@ private:
     std::map<uint8_t, void*> pushSocks_;
     Stat stat_; // 统计对象
     TimerId timerId_;
+    CSimpleIniA& ini_;
 };
 
 

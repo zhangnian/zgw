@@ -6,17 +6,23 @@
 static const uint32_t kMaxConns = 10;
 
 
-ZGWServer::ZGWServer(EventLoop* loop, InetAddress& listenAddr, int numThreads)
+ZGWServer::ZGWServer(EventLoop* loop, InetAddress& listenAddr, CSimpleIniA& ini)
     : server_(loop, listenAddr, "zgw_server"),
       pushThr_(boost::bind(&ZGWServer::pushThreadFunc, this)),
       pullThr_(boost::bind(&ZGWServer::pullThreadFunc, this)),
-      codec_(boost::bind(&ZGWServer::onClientMessage, this, _1, _2, _3))
+      codec_(boost::bind(&ZGWServer::onClientMessage, this, _1, _2, _3)),
+      ini_(ini)
 {
     server_.setConnectionCallback(
         boost::bind(&ZGWServer::onClientConnection, this, _1));
     server_.setMessageCallback(
         boost::bind(&TLVCodec::onClientMessage, &codec_, _1, _2, _3));
-    server_.setThreadNum(numThreads);
+
+    const char* str_num_threads = ini_.GetValue("frontend", "thread", "2");
+    assert( NULL != str_num_threads );
+    int num_threads = atoi(str_num_threads);
+
+    server_.setThreadNum(num_threads);
 
     // 初始化ID池
     for(uint32_t i = 1; i <= kMaxConns; ++i)
@@ -61,9 +67,6 @@ void ZGWServer::pushThreadFunc()
         ZMSG raw_msg = outMsgQueue_.take();
         assert( raw_msg.isVaild() );
 
-        LOG_INFO << "PUSH线程取到消息, 准备发送. msg[id]: " << raw_msg.flow_id << ", msg[type]: "
-                 << raw_msg.msg_type << ", msg[body]: " << raw_msg.msg_body;
-
         dispatchMsgByType(raw_msg);
     }
 }
@@ -74,18 +77,26 @@ void ZGWServer::pullThreadFunc()
     LOG_INFO << "PULL线程启动, TID: " << muduo::CurrentThread::tid();
     assert( NULL != zmqContext_ );
 
+    std::string pull_endpoint = ini_.GetValue("backend", "pull_service", "");
+    if( pull_endpoint.size() == 0 )
+    {
+        LOG_ERROR << "未设置PULL socket的地址";
+        return;
+    }
+
     void* pullSocket = zmq_socket(zmqContext_, ZMQ_PULL);
     assert( NULL != pullSocket );
 
-    int rc = zmq_bind(pullSocket, "tcp://0.0.0.0:22222");
+    int rc = zmq_bind(pullSocket, pull_endpoint.c_str());
     assert( rc == 0 );
 
-    LOG_INFO << "PULL线程绑定成功";
+    LOG_INFO << "绑定PULL Socket成功，地址: " << pull_endpoint;
     while(true)
     {
         zmq_msg_t msg_t;
         rc = zmq_msg_init(&msg_t);
         assert( 0 == rc );
+
         rc = zmq_msg_recv(&msg_t, pullSocket, 0);
         if( rc == -1 )
         {
@@ -97,8 +108,6 @@ void ZGWServer::pullThreadFunc()
         }
         zmq_msg_close(&msg_t);
     }
-
-
 }
 
 
@@ -117,7 +126,7 @@ void ZGWServer::responseMsg(zmq_msg_t& msg_t)
         return;
     }
 
-    LOG_ERROR << "PULL线程反序列化消息成功, msg[id]: " << msg.flow_id << ", msg[type]: "
+    LOG_INFO << "PULL线程反序列化消息成功, msg[id]: " << msg.flow_id << ", msg[type]: "
              << msg.msg_type << ", msg[body]:" << msg.msg_body;
 
     std::map<uint32_t, TcpConnectionPtr>::iterator iter = id2conn_.find(msg.flow_id);
@@ -129,10 +138,13 @@ void ZGWServer::responseMsg(zmq_msg_t& msg_t)
     TcpConnectionPtr conn = iter->second;
 
     muduo::net::Buffer buf;
-    buf.prependInt32(static_cast<int32_t>(msg.msg_body.size()));
     buf.prependInt8(msg.msg_type);
+    buf.prependInt32(static_cast<int32_t>(msg.msg_body.size()));
     buf.append(msg.msg_body.c_str(), msg.msg_body.size());
     conn->send(&buf);
+
+    stat_.msg_recv_cnt.increment();
+    stat_.msg_recv_bytes.addAndGet(msg_size);
 }
 
 
@@ -189,19 +201,45 @@ void ZGWServer::createPushSocks()
 {
     assert( NULL != zmqContext_ );
 
-    void* pushSocket = zmq_socket(zmqContext_, ZMQ_PUSH);
-    assert( NULL != pushSocket );
+    CSimpleIniA::TNamesDepend keys;
+    ini_.GetAllKeys("backend", keys);
+    CSimpleIni::TNamesDepend::const_iterator iter = keys.begin();
+    for (; iter != keys.end(); ++iter )
+    {
+        std::string key = iter->pItem;
+        size_t pos = key.find("push_service_");
+        if( pos == std::string::npos )
+            continue;
 
-    int rc = zmq_bind(pushSocket, "tcp://0.0.0.0:11111");
-    assert( rc == 0 );
+        std::string str_type = key.substr(pos + 13);
+        assert( str_type.size() > 0 );
+        int service_type = atoi(str_type.c_str());
 
-    pushSocks_[1] = pushSocket;
+        std::string service_endpoint = ini_.GetValue("backend", key.c_str(), "");
+        if( service_endpoint.size() == 0 )
+        {
+            LOG_INFO << "类型为: " << service_type << "的进程组未设置地址";
+            continue;
+        }
+
+        void* pushSocket = zmq_socket(zmqContext_, ZMQ_PUSH);
+        assert( NULL != pushSocket );
+
+        int rc = zmq_bind(pushSocket, service_endpoint.c_str());
+        assert( rc == 0 );
+
+        pushSocks_[service_type] = pushSocket;
+        LOG_INFO << "绑定PUSH Socket成功，类型: " << service_type << ", 地址: " << service_endpoint;
+    }
 }
 
 
 void ZGWServer::dispatchMsgByType(ZMSG& msg)
 {
     assert( msg.isVaild() );
+
+    LOG_INFO << "PUSH线程取到消息, 开始进行分发. msg[id]: " << msg.flow_id << ", msg[type]: "
+             << msg.msg_type << ", msg[body]: " << msg.msg_body;
 
     std::map<uint8_t, void*>::iterator iter = pushSocks_.find(msg.msg_type);
     if( iter == pushSocks_.end() )
@@ -222,6 +260,7 @@ void ZGWServer::dispatchMsgByType(ZMSG& msg)
 
     zmq_msg_init_data(&msg_t, const_cast<char*>(str_msg.c_str()), str_msg.size(), NULL, NULL);
     rc = zmq_msg_send(&msg_t, pushSocket, ZMQ_NOBLOCK);
+    LOG_INFO << "zmq_msg_send rc: " << rc;
     if( rc == -1 )
     {
         int err = zmq_errno();

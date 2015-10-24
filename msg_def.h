@@ -35,8 +35,7 @@ struct ZMSG
     {
         size_t msg_total_len = sizeof(flow_id) + sizeof(msg_type) + msg_body.size();
 
-        LOG_INFO << "flow_id: " << flow_id << ", msg_type: " << msg_type << ", msg_body: " << msg_body;
-
+        //LOG_INFO << "flow_id: " << flow_id << ", msg_type: " << msg_type << ", msg_body: " << msg_body;
         char buf[MAX_MSG_SIZE] = { 0 };
         char* p = buf;
 
