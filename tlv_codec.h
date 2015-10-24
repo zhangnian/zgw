@@ -71,11 +71,11 @@ public:
                 messageCallback_(conn, msg, receiveTime);
                 buf->retrieve(msg_len);
 
-                LOG_INFO << "已处理一个完整的消息，缓冲区中剩余字节数为: " << buf->readableBytes();
+                //LOG_INFO << "已处理一个完整的消息，缓冲区中剩余字节数为: " << buf->readableBytes();
             }
             else
             {
-                LOG_INFO << "缓冲区中的字节数不足一个完整的消息";
+                //LOG_INFO << "缓冲区中的字节数不足一个完整的消息，readableBytes: " << buf->readableBytes();
                 break;
             }
         }

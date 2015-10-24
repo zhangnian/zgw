@@ -3,7 +3,7 @@
 #include <errno.h>
 #include <assert.h>
 
-static const uint32_t kMaxConns = 10;
+static const uint32_t kMaxConns = 10000;
 
 
 ZGWServer::ZGWServer(EventLoop* loop, InetAddress& listenAddr, CSimpleIniA& ini)
@@ -126,8 +126,8 @@ void ZGWServer::responseMsg(zmq_msg_t& msg_t)
         return;
     }
 
-    LOG_INFO << "PULL线程反序列化消息成功, msg[id]: " << msg.flow_id << ", msg[type]: "
-             << msg.msg_type << ", msg[body]:" << msg.msg_body;
+    //LOG_INFO << "PULL线程反序列化消息成功, msg[id]: " << msg.flow_id << ", msg[type]: "
+    //         << msg.msg_type << ", msg[body size]:" << msg.msg_body.size();
 
     std::map<uint32_t, TcpConnectionPtr>::iterator iter = id2conn_.find(msg.flow_id);
     if( iter == id2conn_.end() )
@@ -193,7 +193,7 @@ void ZGWServer::onClientMessage(const TcpConnectionPtr& conn, const ZMSG& msg, T
 {
     // 注意，此函数在I/O线程中调用，不能做CPU密集型任务，以免阻塞事件循环
     outMsgQueue_.put(msg);
-    LOG_INFO << "消息入队成功, msg[id]: " << msg.flow_id << ", msg[type]: " << msg.msg_type << ", msg[size]: " << msg.msg_body.size();
+    //LOG_INFO << "消息入队成功, msg[id]: " << msg.flow_id << ", msg[type]: " << msg.msg_type << ", msg[size]: " << msg.msg_body.size();
 }
 
 
@@ -238,8 +238,8 @@ void ZGWServer::dispatchMsgByType(ZMSG& msg)
 {
     assert( msg.isVaild() );
 
-    LOG_INFO << "PUSH线程取到消息, 开始进行分发. msg[id]: " << msg.flow_id << ", msg[type]: "
-             << msg.msg_type << ", msg[body]: " << msg.msg_body;
+    //LOG_INFO << "PUSH线程取到消息, 开始进行分发. msg[id]: " << msg.flow_id << ", msg[type]: "
+    //         << msg.msg_type << ", msg[body_size]: " << msg.msg_body.size();
 
     std::map<uint8_t, void*>::iterator iter = pushSocks_.find(msg.msg_type);
     if( iter == pushSocks_.end() )
@@ -255,23 +255,16 @@ void ZGWServer::dispatchMsgByType(ZMSG& msg)
     assert( str_msg.size() > 0 );
 
     zmq_msg_t msg_t;
-    int rc = zmq_msg_init(&msg_t);
+    int rc = zmq_msg_init_size(&msg_t, str_msg.size());
     assert( 0 == rc );
 
-    zmq_msg_init_data(&msg_t, const_cast<char*>(str_msg.c_str()), str_msg.size(), NULL, NULL);
-    rc = zmq_msg_send(&msg_t, pushSocket, ZMQ_NOBLOCK);
-    if( rc == -1 )
+    memcpy(zmq_msg_data(&msg_t), str_msg.data(), str_msg.size());
+    rc = zmq_msg_send(&msg_t, pushSocket, 0);
+    if( rc < 0 )
     {
-        int err = zmq_errno();
-        if( err == EAGAIN )
-        {
-            LOG_ERROR << "对端未连接，消息被缓存到本地内存中";
-        }
-        else
-        {
-            LOG_ERROR << "PUSH线程发送消息失败, errno: " << err;
-        }
+        LOG_ERROR << "zmq_msg_send rc: " << rc;
     }
+
     zmq_msg_close(&msg_t);
 
     // 更新统计信息
