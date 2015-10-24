@@ -63,7 +63,7 @@ void ZGWServer::pushThreadFunc()
 
     while(true)
     {
-        // 消息队列中无消息是，阻塞等待
+        // 消息队列中无消息时，阻塞等待
         ZMSG raw_msg = outMsgQueue_.take();
         assert( raw_msg.isVaild() );
 
