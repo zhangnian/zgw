@@ -6,11 +6,16 @@
 #include <muduo/net/Buffer.h>
 #include <muduo/net/Endian.h>
 #include <muduo/net/TcpConnection.h>
+#include <muduo/net/Endian.h>
 
 #include <boost/function.hpp>
 #include <boost/noncopyable.hpp>
 
+
 #include "msg_def.h"
+
+using namespace muduo;
+using namespace muduo::net;
 
 
 static const uint8_t kMsgBodyLen = sizeof(uint32_t);
@@ -43,9 +48,9 @@ public:
         // 如果缓冲区中的字节数不足一个消息头的大小，不处理
         while( buf->readableBytes() > kMsgHeaderLen )
         {
-            uint32_t msg_len = buf->peekInt32();
+            // 注意这里字节序的转换
+            uint32_t msg_len = sockets::networkToHost32(buf->peekInt32());
             uint8_t msg_type = buf->peekInt8();
-
             if( msg_len > kMaxMsgSize )
             {
                 LOG_ERROR << "消息体长度非法, msg_len: " << msg_len;
@@ -56,7 +61,7 @@ public:
             // 判断缓冲区中的字节数是否满足至少一个完整消息的大小，一次while循环解析出一条消息
             if( buf->readableBytes() >= kMsgHeaderLen + msg_len )
             {
-                msg_len = buf->readInt32();
+                msg_len = muduo::net::sockets::networkToHost32(buf->readInt32());
                 msg_type = buf->readInt8();
                 std::string msg_body(buf->peek(), msg_len);
 

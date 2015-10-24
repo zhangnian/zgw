@@ -34,7 +34,7 @@ ZGWServer::ZGWServer(EventLoop* loop, InetAddress& listenAddr, CSimpleIniA& ini)
     zmqContext_ = zmq_ctx_new();
     assert( NULL != zmqContext_ );
 
-    timerId_ = loop->runEvery(10.0, boost::bind(&ZGWServer::Cron, this));
+    timerId_ = loop->runEvery(5.0, boost::bind(&ZGWServer::Cron, this));
 }
 
 
@@ -260,7 +260,6 @@ void ZGWServer::dispatchMsgByType(ZMSG& msg)
 
     zmq_msg_init_data(&msg_t, const_cast<char*>(str_msg.c_str()), str_msg.size(), NULL, NULL);
     rc = zmq_msg_send(&msg_t, pushSocket, ZMQ_NOBLOCK);
-    LOG_INFO << "zmq_msg_send rc: " << rc;
     if( rc == -1 )
     {
         int err = zmq_errno();
