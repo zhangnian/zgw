@@ -34,7 +34,7 @@ ZGWServer::ZGWServer(EventLoop* loop, InetAddress& listenAddr, CSimpleIniA& ini)
     zmqContext_ = zmq_ctx_new();
     assert( NULL != zmqContext_ );
 
-    timerId_ = loop->runEvery(5.0, boost::bind(&ZGWServer::Cron, this));
+    timerId_ = loop->runEvery(3.0, boost::bind(&ZGWServer::Cron, this));
 }
 
 
@@ -225,6 +225,8 @@ void ZGWServer::createPushSocks()
         void* pushSocket = zmq_socket(zmqContext_, ZMQ_PUSH);
         assert( NULL != pushSocket );
 
+        // 注意，PUSH端调用bind，如果PULL端没有connect上来，send调用会阻塞.
+        // 为了让这种情况下send调用不阻塞并直接丢弃消息，需要在send时指定：ZMQ_DONTWAIT.
         int rc = zmq_bind(pushSocket, service_endpoint.c_str());
         assert( rc == 0 );
 
@@ -259,22 +261,33 @@ void ZGWServer::dispatchMsgByType(ZMSG& msg)
     assert( 0 == rc );
 
     memcpy(zmq_msg_data(&msg_t), str_msg.data(), str_msg.size());
-    rc = zmq_msg_send(&msg_t, pushSocket, 0);
+    rc = zmq_msg_send(&msg_t, pushSocket, ZMQ_DONTWAIT);
     if( rc < 0 )
     {
-        LOG_ERROR << "zmq_msg_send rc: " << rc;
+        if( errno == EAGAIN )
+        {
+            LOG_INFO << "PULL端未connect上来，直接丢弃消息";
+        }
+        else
+        {
+            LOG_ERROR << "PUSH线程发送消息失败, errno: " << errno;
+        }
     }
 
     zmq_msg_close(&msg_t);
 
-    // 更新统计信息
-    stat_.msg_sent_cnt.increment();
-    stat_.msg_sent_bytes.addAndGet(str_msg.size());
-
+    if( rc > 0 )
+    {
+        // 更新统计信息
+        stat_.msg_sent_cnt.increment();
+        stat_.msg_sent_bytes.addAndGet(str_msg.size());
+    }
 }
 
 
 void ZGWServer::Cron()
 {
-    stat_.print();
+    LOG_INFO << "总发送消息数: " << stat_.msg_sent_cnt.get() << ", 总发送消息字节数: " << stat_.msg_sent_bytes.get()
+             << ", 总接收消息数: " << stat_.msg_recv_cnt.get() << ", 总接收消息字节数: " << stat_.msg_recv_bytes.get()
+             << ", 消息队列长度: " << outMsgQueue_.size();
 }
