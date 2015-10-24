@@ -15,6 +15,8 @@
 #include <boost/bind.hpp>
 #include <queue>
 
+#include "zmq.h"
+
 #include "msg_def.h"
 #include "tlv_codec.h"
 #include "stat.h"
@@ -77,6 +79,10 @@ private:
      */
     void Cron();
 
+    /**
+     * 发送回复消息给客户端
+     */
+    void responseMsg(zmq_msg_t& msg_t);
 
 private:
     TcpServer server_;

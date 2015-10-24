@@ -2,11 +2,8 @@
 
 #include <errno.h>
 #include <assert.h>
-#include <zmq.h>
 
 static const uint32_t kMaxConns = 10;
-
-
 
 
 ZGWServer::ZGWServer(EventLoop* loop, InetAddress& listenAddr, int numThreads)
@@ -31,7 +28,7 @@ ZGWServer::ZGWServer(EventLoop* loop, InetAddress& listenAddr, int numThreads)
     zmqContext_ = zmq_ctx_new();
     assert( NULL != zmqContext_ );
 
-    timerId_ = loop->runEvery(3.0, boost::bind(&ZGWServer::Cron, this));
+    timerId_ = loop->runEvery(10.0, boost::bind(&ZGWServer::Cron, this));
 }
 
 
@@ -80,10 +77,62 @@ void ZGWServer::pullThreadFunc()
     void* pullSocket = zmq_socket(zmqContext_, ZMQ_PULL);
     assert( NULL != pullSocket );
 
-    int rc = zmq_bind(pullSocket, "tcp://127.0.0.1:5589");
+    int rc = zmq_bind(pullSocket, "tcp://0.0.0.0:22222");
     assert( rc == 0 );
 
     LOG_INFO << "PULL线程绑定成功";
+    while(true)
+    {
+        zmq_msg_t msg_t;
+        rc = zmq_msg_init(&msg_t);
+        assert( 0 == rc );
+        rc = zmq_msg_recv(&msg_t, pullSocket, 0);
+        if( rc == -1 )
+        {
+            LOG_ERROR << "PULL线程接收消息失败, errno: " << errno;
+        }
+        else
+        {
+            responseMsg(msg_t);
+        }
+        zmq_msg_close(&msg_t);
+    }
+
+
+}
+
+
+void ZGWServer::responseMsg(zmq_msg_t& msg_t)
+{
+    size_t msg_size = zmq_msg_size(&msg_t);
+    assert( msg_size > 0 );
+
+    std::string str_msg(static_cast<char*>(zmq_msg_data(&msg_t)), msg_size);
+
+    ZMSG msg;
+    int rc = msg.deserialize(str_msg);
+    if( rc != 0 )
+    {
+        LOG_ERROR << "PULL线程反序列化消息失败, ret: " << rc;
+        return;
+    }
+
+    LOG_ERROR << "PULL线程反序列化消息成功, msg[id]: " << msg.flow_id << ", msg[type]: "
+             << msg.msg_type << ", msg[body]:" << msg.msg_body;
+
+    std::map<uint32_t, TcpConnectionPtr>::iterator iter = id2conn_.find(msg.flow_id);
+    if( iter == id2conn_.end() )
+    {
+        LOG_ERROR << "PULL线程查找flow_id: " << msg.flow_id << "对应的连接失败";
+        return;
+    }
+    TcpConnectionPtr conn = iter->second;
+
+    muduo::net::Buffer buf;
+    buf.prependInt32(static_cast<int32_t>(msg.msg_body.size()));
+    buf.prependInt8(msg.msg_type);
+    buf.append(msg.msg_body.c_str(), msg.msg_body.size());
+    conn->send(&buf);
 }
 
 
@@ -111,7 +160,7 @@ void ZGWServer::onClientConnection(const TcpConnectionPtr& conn)
         else
         {
             conn->setContext(id);
-            LOG_INFO << "conn id: " << id;
+            LOG_INFO << "新连接[" << conn->peerAddress().toIpPort() << "]流水ID: " << id;
         }
     }
     else
@@ -143,7 +192,7 @@ void ZGWServer::createPushSocks()
     void* pushSocket = zmq_socket(zmqContext_, ZMQ_PUSH);
     assert( NULL != pushSocket );
 
-    int rc = zmq_bind(pushSocket, "tcp://127.0.0.1:11111");
+    int rc = zmq_bind(pushSocket, "tcp://0.0.0.0:11111");
     assert( rc == 0 );
 
     pushSocks_[1] = pushSocket;

@@ -40,6 +40,7 @@ public:
                  muduo::net::Buffer* buf,
                  muduo::Timestamp receiveTime)
     {
+        // 如果缓冲区中的字节数不足一个消息头的大小，不处理
         while( buf->readableBytes() > kMsgHeaderLen )
         {
             uint32_t msg_len = buf->peekInt32();
@@ -52,6 +53,7 @@ public:
                 break;
             }
 
+            // 判断缓冲区中的字节数是否满足至少一个完整消息的大小，一次while循环解析出一条消息
             if( buf->readableBytes() >= kMsgHeaderLen + msg_len )
             {
                 msg_len = buf->readInt32();

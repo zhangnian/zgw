@@ -7,6 +7,7 @@
 /**
  * 定于ZGW与后端进程交互使用的消息格式
  */
+#pragma pack(1)
 struct ZMSG
 {
     int32_t flow_id;            // 流水号，用于匹配一次请求和响应
@@ -51,6 +52,24 @@ struct ZMSG
         res.assign(buf, msg_total_len);
         return res;
     }
+
+    int deserialize(const std::string& str)
+    {
+        char buf[MAX_MSG_SIZE] = { 0 };
+        str.copy(buf, str.size());
+
+        char* p = buf;
+        memcpy(&flow_id, p, sizeof(flow_id));
+        p += sizeof(flow_id);
+
+        memcpy(&msg_type, p, sizeof(msg_type));
+        p += sizeof(msg_type);
+
+        msg_body.assign(p, str.size() - sizeof(flow_id) - sizeof(msg_type));
+        return 0;
+    }
 };
+#pragma pack()
+
 
 #endif
